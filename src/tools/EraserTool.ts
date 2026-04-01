@@ -2,140 +2,284 @@ import type { Tool } from './Tool';
 import type { CanvasView } from '../canvas/CanvasView';
 import type { CommandManager } from '../core/CommandManager';
 import type { EditorState } from '../core/EditorState';
+import type { Command } from '../core/commands/Command';
 import { createSvgElement } from '../utils/dom';
 
 /**
- * Eraser tool that uses SVG masks to hide portions of elements.
+ * Eraser tool that splits SVG paths by removing segments that intersect
+ * the eraser stroke. The remaining portions become separate path elements.
  *
- * When the user draws an eraser stroke over the canvas, each element
- * under the stroke gets a <mask> applied. The mask starts as a white
- * rect (fully visible) and the eraser adds black paths (hidden areas).
+ * For non-path elements (rect, circle, etc.) it converts them to paths first.
  */
 
-interface EraserCommand {
-  execute(): void;
-  undo(): void;
-  description: string;
+// ── Geometry helpers ─────────────────────────────────────────────────
+
+interface Pt { x: number; y: number }
+
+function distSq(a: Pt, b: Pt): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
 }
 
-class ApplyEraserCommand implements EraserCommand {
-  description = 'Erase';
-  private affectedElements: {
-    element: SVGElement;
-    oldMask: string | null;
-    newMaskId: string;
-    maskElement: SVGMaskElement;
-    createdDefs: boolean;
-  }[] = [];
+/** Shortest distance from point P to segment AB. */
+function pointToSegmentDist(p: Pt, a: Pt, b: Pt): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const lenSq = abx * abx + aby * aby;
+  if (lenSq === 0) return Math.sqrt(distSq(p, a));
+  let t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.sqrt(distSq(p, { x: a.x + t * abx, y: a.y + t * aby }));
+}
+
+/** Check if point is within `radius` of any segment of the eraser polyline. */
+function isInsideEraserStroke(p: Pt, eraserPts: Pt[], radius: number): boolean {
+  for (let i = 0; i < eraserPts.length - 1; i++) {
+    if (pointToSegmentDist(p, eraserPts[i], eraserPts[i + 1]) < radius) {
+      return true;
+    }
+  }
+  // Also check against individual eraser points (handles single-point / click erase)
+  if (eraserPts.length === 1) {
+    return Math.sqrt(distSq(p, eraserPts[0])) < radius;
+  }
+  return false;
+}
+
+// ── Path sampling ────────────────────────────────────────────────────
+
+/**
+ * Sample a path element into evenly-spaced points.
+ * Uses the native `getTotalLength()` and `getPointAtLength()` APIs.
+ */
+function samplePath(pathEl: SVGPathElement, step: number): Pt[] {
+  const totalLen = pathEl.getTotalLength();
+  if (totalLen === 0) return [];
+  const pts: Pt[] = [];
+  for (let d = 0; d <= totalLen; d += step) {
+    const p = pathEl.getPointAtLength(d);
+    pts.push({ x: p.x, y: p.y });
+  }
+  // Always include the very last point
+  const last = pathEl.getPointAtLength(totalLen);
+  const tail = pts[pts.length - 1];
+  if (!tail || Math.abs(tail.x - last.x) > 0.01 || Math.abs(tail.y - last.y) > 0.01) {
+    pts.push({ x: last.x, y: last.y });
+  }
+  return pts;
+}
+
+/** Build a path `d` attribute from a run of points using line segments. */
+function pointsToPathD(pts: Pt[]): string {
+  if (pts.length === 0) return '';
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length; i++) {
+    d += ` L${pts[i].x},${pts[i].y}`;
+  }
+  return d;
+}
+
+// ── Command ──────────────────────────────────────────────────────────
+
+interface ErasedEntry {
+  original: SVGElement;
+  /** Next sibling before removal, used to restore exact DOM position. */
+  nextSibling: Node | null;
+  parent: Node;
+  newPaths: SVGElement[];
+}
+
+class ErasePathCommand implements Command {
+  description = 'Erase path';
+  private entries: ErasedEntry[] = [];
 
   constructor(
-    private workspace: SVGSVGElement,
     private contentGroup: SVGGElement,
-    private eraserPath: string,
-    private eraserWidth: number,
-    private viewBox: { x: number; y: number; width: number; height: number }
+    private eraserPts: Pt[],
+    private eraserRadius: number,
+    private sampleStep: number
   ) {}
 
   execute(): void {
-    this.affectedElements = [];
-
-    // Ensure <defs> exists
-    let defs = this.workspace.querySelector('defs');
-    const createdDefs = !defs;
-    if (!defs) {
-      defs = createSvgElement('defs', {});
-      this.workspace.insertBefore(defs, this.contentGroup);
-    }
-
-    // Find elements that should be affected (all visible content elements)
+    this.entries = [];
     const children = Array.from(this.contentGroup.children) as SVGElement[];
+
     for (const child of children) {
       if (child.getAttribute('display') === 'none') continue;
       if (child.hasAttribute('data-locked')) continue;
 
-      const existingMaskAttr = child.getAttribute('mask');
-      let maskEl: SVGMaskElement;
-      let maskId: string;
+      const pathEl = this.toPathElement(child);
+      if (!pathEl) continue;
 
-      if (existingMaskAttr && existingMaskAttr.startsWith('url(#eraser-mask-')) {
-        // Append to existing eraser mask
-        maskId = existingMaskAttr.replace('url(#', '').replace(')', '');
-        maskEl = defs!.querySelector(`#${maskId}`) as SVGMaskElement;
-        if (!maskEl) continue;
-      } else {
-        // Create new mask
-        maskId = `eraser-mask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        maskEl = createSvgElement('mask', { id: maskId }) as unknown as SVGMaskElement;
+      const sampled = samplePath(pathEl, this.sampleStep);
+      if (sampled.length === 0) continue;
 
-        // White rect = show everything by default
-        const whiteRect = createSvgElement('rect', {
-          x: String(this.viewBox.x - this.viewBox.width),
-          y: String(this.viewBox.y - this.viewBox.height),
-          width: String(this.viewBox.width * 3),
-          height: String(this.viewBox.height * 3),
-          fill: 'white',
-        });
-        maskEl.appendChild(whiteRect);
-        defs!.appendChild(maskEl);
+      // Split sampled points into "surviving" runs
+      const runs: Pt[][] = [];
+      let currentRun: Pt[] = [];
+
+      for (const pt of sampled) {
+        if (isInsideEraserStroke(pt, this.eraserPts, this.eraserRadius)) {
+          // Erased — break the current run
+          if (currentRun.length > 1) {
+            runs.push(currentRun);
+          }
+          currentRun = [];
+        } else {
+          currentRun.push(pt);
+        }
+      }
+      if (currentRun.length > 1) {
+        runs.push(currentRun);
       }
 
-      // Add the eraser stroke as a black path (hidden area)
-      const eraserStroke = createSvgElement('path', {
-        d: this.eraserPath,
-        stroke: 'black',
-        'stroke-width': String(this.eraserWidth),
-        'stroke-linecap': 'round',
-        'stroke-linejoin': 'round',
-        fill: 'none',
-        class: 'eraser-stroke',
-      });
-      maskEl.appendChild(eraserStroke);
+      // If nothing was erased, skip this element
+      if (runs.length === 1 && runs[0].length === sampled.length) continue;
 
-      // Apply mask to element
-      child.setAttribute('mask', `url(#${maskId})`);
+      // Build replacement paths
+      const newPaths: SVGElement[] = [];
+      for (const run of runs) {
+        const d = pointsToPathD(run);
+        const newPath = createSvgElement('path', { d }) as SVGElement;
 
-      this.affectedElements.push({
-        element: child,
-        oldMask: existingMaskAttr,
-        newMaskId: maskId,
-        maskElement: maskEl,
-        createdDefs,
-      });
+        // Copy visual attributes from original
+        this.copyAttributes(child, newPath);
+        newPaths.push(newPath);
+      }
+
+      // Record for undo
+      const entry: ErasedEntry = {
+        original: child,
+        nextSibling: child.nextSibling,
+        parent: child.parentNode!,
+        newPaths,
+      };
+      this.entries.push(entry);
+
+      // Replace original with new paths
+      for (const np of newPaths) {
+        this.contentGroup.insertBefore(np, child);
+      }
+      child.remove();
     }
   }
 
   undo(): void {
-    const defs = this.workspace.querySelector('defs');
-    for (const entry of this.affectedElements) {
-      if (entry.oldMask) {
-        entry.element.setAttribute('mask', entry.oldMask);
-      } else {
-        entry.element.removeAttribute('mask');
+    for (const entry of this.entries) {
+      // Remove replacement paths
+      for (const np of entry.newPaths) {
+        np.remove();
       }
-
-      // If we created this mask, remove it entirely
-      if (!entry.oldMask) {
-        entry.maskElement.remove();
+      // Restore original element at its original position
+      if (entry.nextSibling) {
+        entry.parent.insertBefore(entry.original, entry.nextSibling);
       } else {
-        // Remove just the last eraser stroke we added
-        const strokes = entry.maskElement.querySelectorAll('.eraser-stroke');
-        if (strokes.length > 0) {
-          strokes[strokes.length - 1].remove();
-        }
+        entry.parent.appendChild(entry.original);
       }
     }
+    this.entries = [];
+  }
 
-    // Remove defs if we created it and it's now empty
-    if (defs && defs.children.length === 0) {
-      defs.remove();
+  /** Copy visual/transform attributes from src to dst, skipping geometry. */
+  private copyAttributes(src: SVGElement, dst: SVGElement): void {
+    const skip = new Set([
+      'x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'rx', 'ry',
+      'x1', 'y1', 'x2', 'y2', 'points', 'd',
+      'class', 'data-locked',
+    ]);
+    for (let i = 0; i < src.attributes.length; i++) {
+      const attr = src.attributes[i];
+      if (!skip.has(attr.name)) {
+        dst.setAttribute(attr.name, attr.value);
+      }
+    }
+    // For paths with fill, if original was not a path the fill is already inherited.
+    // For stroked shapes turned into paths, keep fill="none" if original had no fill.
+  }
+
+  /**
+   * Obtain a temporary SVGPathElement for sampling.
+   * For <path> returns itself; for other shapes, creates a temporary
+   * equivalent <path> in the DOM so getTotalLength/getPointAtLength work.
+   */
+  private toPathElement(el: SVGElement): SVGPathElement | null {
+    if (el instanceof SVGPathElement) return el;
+
+    // For basic shapes, generate an equivalent path `d`
+    const d = this.shapeToPathD(el);
+    if (!d) return null;
+
+    // We need a real DOM-attached element for getTotalLength
+    const tmp = createSvgElement('path', { d }) as unknown as SVGPathElement;
+    // Copy transform so sampling is in the right coordinate space
+    const tf = el.getAttribute('transform');
+    if (tf) tmp.setAttribute('transform', tf);
+    // Temporarily attach to workspace for measurement
+    el.parentElement?.appendChild(tmp);
+    // Tag it for cleanup
+    tmp.setAttribute('data-tmp-eraser', 'true');
+    return tmp;
+  }
+
+  private shapeToPathD(el: SVGElement): string | null {
+    const tag = el.tagName.toLowerCase();
+    switch (tag) {
+      case 'rect': {
+        const x = parseFloat(el.getAttribute('x') || '0');
+        const y = parseFloat(el.getAttribute('y') || '0');
+        const w = parseFloat(el.getAttribute('width') || '0');
+        const h = parseFloat(el.getAttribute('height') || '0');
+        if (w === 0 || h === 0) return null;
+        return `M${x},${y} L${x + w},${y} L${x + w},${y + h} L${x},${y + h} Z`;
+      }
+      case 'circle': {
+        const cx = parseFloat(el.getAttribute('cx') || '0');
+        const cy = parseFloat(el.getAttribute('cy') || '0');
+        const r = parseFloat(el.getAttribute('r') || '0');
+        if (r === 0) return null;
+        return `M${cx - r},${cy} A${r},${r} 0 1,0 ${cx + r},${cy} A${r},${r} 0 1,0 ${cx - r},${cy} Z`;
+      }
+      case 'ellipse': {
+        const cx = parseFloat(el.getAttribute('cx') || '0');
+        const cy = parseFloat(el.getAttribute('cy') || '0');
+        const rx = parseFloat(el.getAttribute('rx') || '0');
+        const ry = parseFloat(el.getAttribute('ry') || '0');
+        if (rx === 0 || ry === 0) return null;
+        return `M${cx - rx},${cy} A${rx},${ry} 0 1,0 ${cx + rx},${cy} A${rx},${ry} 0 1,0 ${cx - rx},${cy} Z`;
+      }
+      case 'line': {
+        const x1 = parseFloat(el.getAttribute('x1') || '0');
+        const y1 = parseFloat(el.getAttribute('y1') || '0');
+        const x2 = parseFloat(el.getAttribute('x2') || '0');
+        const y2 = parseFloat(el.getAttribute('y2') || '0');
+        return `M${x1},${y1} L${x2},${y2}`;
+      }
+      case 'polyline':
+      case 'polygon': {
+        const pts = el.getAttribute('points');
+        if (!pts) return null;
+        const coords = pts.trim().split(/[\s,]+/).map(Number);
+        if (coords.length < 4) return null;
+        let d = `M${coords[0]},${coords[1]}`;
+        for (let i = 2; i < coords.length; i += 2) {
+          d += ` L${coords[i]},${coords[i + 1]}`;
+        }
+        if (tag === 'polygon') d += ' Z';
+        return d;
+      }
+      default:
+        return null;
     }
   }
 }
 
+// ── Tool ─────────────────────────────────────────────────────────────
+
 export class EraserTool implements Tool {
   cursor = 'crosshair';
   private isDrawing = false;
-  private pathPoints: { x: number; y: number }[] = [];
+  private pathPoints: Pt[] = [];
   private previewPath: SVGPathElement | null = null;
   private _eraserWidth = 10;
 
@@ -183,22 +327,28 @@ export class EraserTool implements Tool {
     this.isDrawing = false;
     (e.target as Element)?.releasePointerCapture?.(e.pointerId);
 
-    if (this.pathPoints.length < 2) {
+    if (this.pathPoints.length === 0) {
       this.cleanupPreview();
       return;
     }
 
-    const pathD = this.buildPathD();
     this.cleanupPreview();
 
-    const cmd = new ApplyEraserCommand(
-      this.canvasView.workspace,
+    // Choose sampling resolution based on eraser width (finer = smoother cuts)
+    const sampleStep = Math.max(0.5, this._eraserWidth / 4);
+
+    const cmd = new ErasePathCommand(
       this.canvasView.contentGroup,
-      pathD,
-      this._eraserWidth,
-      this.canvasView.originalViewBox
+      [...this.pathPoints],
+      this._eraserWidth / 2,
+      sampleStep
     );
     this.commandManager.execute(cmd);
+
+    // Clean up any temporary elements created during sampling
+    const tmps = this.canvasView.contentGroup.querySelectorAll('[data-tmp-eraser]');
+    tmps.forEach((t) => t.remove());
+
     this.state.refreshLayers();
   }
 
