@@ -2,6 +2,7 @@ import type { EditorState } from '../core/EditorState';
 import type { SelectionManager } from '../core/SelectionManager';
 import type { CommandManager } from '../core/CommandManager';
 import { ChangeAttributeCommand } from '../core/commands/ChangeAttributeCommand';
+import { DeleteElementCommand } from '../core/commands/DeleteElementCommand';
 import { CompositeCommand } from '../core/commands/CompositeCommand';
 import { ColorPicker } from './ColorPicker';
 import { getComputedAttribute } from '../utils/svg';
@@ -161,6 +162,17 @@ export class PropertiesPanel {
     transformSection.appendChild(hRow);
 
     this.propsContent.appendChild(transformSection);
+
+    // Delete button
+    const deleteSection = document.createElement('div');
+    deleteSection.className = 'panel-section props-delete-section';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'props-delete-btn';
+    deleteBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M6 5V4a1 1 0 011-1h2a1 1 0 011 1v1M5 5v7a1 1 0 001 1h4a1 1 0 001-1V5"/></svg> Delete Element`;
+    deleteBtn.onclick = () => this.deleteSelected();
+    deleteSection.appendChild(deleteBtn);
+    this.propsContent.appendChild(deleteSection);
+
     this.container.appendChild(this.propsContent);
   }
 
@@ -237,6 +249,20 @@ export class PropertiesPanel {
     const selected = this.selectionManager.selected;
     if (selected.length === 0) return null;
     return getComputedAttribute(selected[0], attr);
+  }
+
+  private deleteSelected(): void {
+    const selected = this.selectionManager.selected;
+    if (selected.length === 0) return;
+
+    const commands = selected.map((el) => new DeleteElementCommand(el));
+    if (commands.length === 1) {
+      this.commandManager.execute(commands[0]);
+    } else {
+      this.commandManager.execute(new CompositeCommand(commands, 'Delete elements'));
+    }
+    this.selectionManager.clearSelection();
+    this.state.refreshLayers();
   }
 
   private applyAttribute(attr: string, value: string | null): void {
