@@ -1,0 +1,63 @@
+.canvas-area {
+  /* Checkerboard pattern for transparency */
+  background-image:
+    linear-gradient(45deg, #2a2a3a 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2a3a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2a3a 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2a3a 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  cursor: default;
+}
+
+.canvas-area.tool-hand {
+  cursor: grab;
+}
+
+.canvas-area.tool-hand.panning {
+  cursor: grabbing;
+}
+
+.canvas-area.tool-select {
+  cursor: default;
+}
+
+.canvas-area.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+.canvas-area svg.workspace {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Welcome overlay when no SVG loaded */
+.canvas-welcome {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.canvas-welcome svg {
+  width: 64px;
+  height: 64px;
+  opacity: 0.4;
+}
+
+.canvas-welcome p {
+  font-size: 15px;
+}
+
+.canvas-welcome .shortcut {
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}

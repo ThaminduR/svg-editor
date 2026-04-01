@@ -1,0 +1,100 @@
+#app {
+  display: grid;
+  grid-template-areas:
+    "toolbar toolbar toolbar"
+    "layers  canvas  properties";
+  grid-template-columns: 240px 1fr 280px;
+  grid-template-rows: 48px 1fr;
+  height: 100vh;
+  width: 100vw;
+}
+
+.toolbar {
+  grid-area: toolbar;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+
+.layers-panel {
+  grid-area: layers;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  z-index: 5;
+}
+
+.canvas-area {
+  grid-area: canvas;
+  background: var(--bg-primary);
+  overflow: hidden;
+  position: relative;
+}
+
+.properties-panel {
+  grid-area: properties;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  z-index: 5;
+}
+
+/* Tablet: collapse panels */
+@media (max-width: 1024px) {
+  #app {
+    grid-template-columns: 48px 1fr 48px;
+  }
+
+  .layers-panel,
+  .properties-panel {
+    position: relative;
+  }
+
+  .layers-panel.expanded {
+    position: absolute;
+    left: 0;
+    top: 48px;
+    bottom: 0;
+    width: 240px;
+    z-index: 20;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .properties-panel.expanded {
+    position: absolute;
+    right: 0;
+    top: 48px;
+    bottom: 0;
+    width: 280px;
+    z-index: 20;
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/* Small tablet / large phone: properties to bottom */
+@media (max-width: 768px) {
+  #app {
+    grid-template-areas:
+      "toolbar toolbar"
+      "layers  canvas"
+      "properties properties";
+    grid-template-columns: 48px 1fr;
+    grid-template-rows: 48px 1fr 200px;
+  }
+
+  .properties-panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+  }
+
+  .properties-panel.expanded {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 50vh;
+    z-index: 20;
+  }
+}
