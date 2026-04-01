@@ -5,6 +5,7 @@ import { EditorMode } from '../types';
 interface ToolSet {
   selectTool: Tool;
   handTool: Tool;
+  eraserTool: Tool;
 }
 
 export class ToolManager {
@@ -19,6 +20,7 @@ export class ToolManager {
     this.tools = new Map([
       [EditorMode.SELECT, toolSet.selectTool],
       [EditorMode.HAND, toolSet.handTool],
+      [EditorMode.ERASER, toolSet.eraserTool],
     ]);
 
     this._activeTool = toolSet.selectTool;

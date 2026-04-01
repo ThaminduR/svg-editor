@@ -8,6 +8,7 @@ import { EditorMode } from '../types';
 const ICONS = {
   select: `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l10 7-5 1.5L7.5 16z"/></svg>`,
   hand: `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 2v10M5.5 5v7a3.5 3.5 0 007 0V5M3 7v5a6 6 0 0012 0V7"/></svg>`,
+  eraser: `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.5 3.5l4 4-7.5 7.5H3.5v-3.5z"/><path d="M8.5 5.5l4 4"/><path d="M3 15h12"/></svg>`,
   undo: `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 7h7a4 4 0 010 8H8M4 7l3-3M4 7l3 3"/></svg>`,
   redo: `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 7H7a4 4 0 000 8h3M14 7l-3-3M14 7l-3 3"/></svg>`,
   zoomIn: `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5"/><path d="M12 12l4 4M6 8h4M8 6v4"/></svg>`,
@@ -22,6 +23,7 @@ export class Toolbar {
   private redoBtn!: HTMLButtonElement;
   private selectBtn!: HTMLButtonElement;
   private handBtn!: HTMLButtonElement;
+  private eraserBtn!: HTMLButtonElement;
   private zoomDisplay!: HTMLSpanElement;
 
   constructor(
@@ -49,7 +51,8 @@ export class Toolbar {
     this.selectBtn = this.createIconBtn('select', ICONS.select, 'Select (V)');
     this.selectBtn.classList.add('active');
     this.handBtn = this.createIconBtn('hand', ICONS.hand, 'Hand (H)');
-    toolsGroup.append(this.selectBtn, this.handBtn);
+    this.eraserBtn = this.createIconBtn('eraser', ICONS.eraser, 'Eraser (E)');
+    toolsGroup.append(this.selectBtn, this.handBtn, this.eraserBtn);
     container.appendChild(toolsGroup);
 
     container.appendChild(this.createSeparator());
@@ -91,6 +94,7 @@ export class Toolbar {
     // Event handlers
     this.selectBtn.onclick = () => { this.state.activeTool = EditorMode.SELECT; };
     this.handBtn.onclick = () => { this.state.activeTool = EditorMode.HAND; };
+    this.eraserBtn.onclick = () => { this.state.activeTool = EditorMode.ERASER; };
     this.undoBtn.onclick = () => this.commandManager.undo();
     this.redoBtn.onclick = () => this.commandManager.redo();
     zoomInBtn.onclick = () => {
@@ -125,6 +129,7 @@ export class Toolbar {
     this.state.on('tool-changed', (mode) => {
       this.selectBtn.classList.toggle('active', mode === EditorMode.SELECT);
       this.handBtn.classList.toggle('active', mode === EditorMode.HAND);
+      this.eraserBtn.classList.toggle('active', mode === EditorMode.ERASER);
     });
 
     this.state.on('undo-redo-changed', ({ canUndo, canRedo }) => {

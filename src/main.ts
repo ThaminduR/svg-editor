@@ -16,6 +16,7 @@ import { PanZoom } from './canvas/PanZoom';
 import { ToolManager } from './tools/ToolManager';
 import { SelectTool } from './tools/SelectTool';
 import { HandTool } from './tools/HandTool';
+import { EraserTool } from './tools/EraserTool';
 import { Toolbar } from './panels/Toolbar';
 import { PropertiesPanel } from './panels/PropertiesPanel';
 import { LayersPanel } from './panels/LayersPanel';
@@ -69,7 +70,8 @@ class SVGEditorApp {
       this.state
     );
     const handTool = new HandTool(this.canvasView, this.panZoom);
-    this.toolManager = new ToolManager(this.state, { selectTool, handTool });
+    const eraserTool = new EraserTool(this.canvasView, this.commandManager, this.state);
+    this.toolManager = new ToolManager(this.state, { selectTool, handTool, eraserTool });
 
     // Interaction
     this.interactionManager = new InteractionManager(
@@ -118,6 +120,60 @@ class SVGEditorApp {
     );
 
     this.setupKeyboardShortcuts();
+    this.setupAutoSave();
+    this.restoreFromLocalStorage();
+  }
+
+  private static STORAGE_KEY = 'svg-editor-state';
+
+  private setupAutoSave(): void {
+    // Save after every command (attribute change, transform, delete, etc.)
+    this.state.on('command-executed', () => this.saveToLocalStorage());
+    // Also save after SVG import
+    this.state.on('svg-loaded', () => this.saveToLocalStorage());
+  }
+
+  private saveToLocalStorage(): void {
+    try {
+      const serializer = new XMLSerializer();
+      const contentGroup = this.canvasView.getContentElement();
+      const defs = this.canvasView.workspace.querySelector('defs');
+      const vb = this.canvasView.originalViewBox;
+
+      // Build a standalone SVG string
+      const svgNs = 'http://www.w3.org/2000/svg';
+      const doc = document.implementation.createDocument(svgNs, 'svg', null);
+      const root = doc.documentElement;
+      root.setAttribute('xmlns', svgNs);
+      root.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.width} ${vb.height}`);
+
+      if (defs) {
+        root.appendChild(doc.importNode(defs, true));
+      }
+      for (let i = 0; i < contentGroup.children.length; i++) {
+        root.appendChild(doc.importNode(contentGroup.children[i], true));
+      }
+
+      const svgString = serializer.serializeToString(root);
+      localStorage.setItem(SVGEditorApp.STORAGE_KEY, svgString);
+    } catch {
+      // Silently fail — localStorage may be full or unavailable
+    }
+  }
+
+  private restoreFromLocalStorage(): void {
+    try {
+      const saved = localStorage.getItem(SVGEditorApp.STORAGE_KEY);
+      if (!saved) return;
+
+      const svg = this.importer.importFromString(saved);
+      this.canvasView.loadSvgContent(svg);
+      this.state.loadSvg(svg, this.canvasView.getContentElement());
+      this.selectionManager.clearSelection();
+    } catch {
+      // Invalid or corrupt data — ignore and start fresh
+      localStorage.removeItem(SVGEditorApp.STORAGE_KEY);
+    }
   }
 
   private setupKeyboardShortcuts(): void {
@@ -187,6 +243,10 @@ class SVGEditorApp {
       }
       if (e.key === 'h' || e.key === 'H') {
         this.state.activeTool = EditorMode.HAND;
+        return;
+      }
+      if (e.key === 'e' || e.key === 'E') {
+        this.state.activeTool = EditorMode.ERASER;
         return;
       }
 

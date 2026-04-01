@@ -1,6 +1,7 @@
 export enum EditorMode {
   SELECT = 'select',
   HAND = 'hand',
+  ERASER = 'eraser',
 }
 
 export interface LayerInfo {
