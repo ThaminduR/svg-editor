@@ -104,6 +104,18 @@
   opacity: 0.5;
 }
 
+.layer-row.dragging {
+  opacity: 0.4;
+}
+
+.layer-row.drop-above {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+
+.layer-row.drop-below {
+  box-shadow: 0 2px 0 0 var(--accent);
+}
+
 .layer-name {
   flex: 1;
   font-size: 12px;
@@ -150,6 +162,11 @@
 
 .layer-action-btn.active {
   color: var(--accent);
+}
+
+.layer-delete-btn:hover {
+  color: var(--danger);
+  background: rgba(255, 68, 68, 0.1);
 }
 
 /* Empty state */

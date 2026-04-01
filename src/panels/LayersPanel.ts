@@ -2,6 +2,7 @@ import type { EditorState } from '../core/EditorState';
 import type { SelectionManager } from '../core/SelectionManager';
 import type { CommandManager } from '../core/CommandManager';
 import { ChangeAttributeCommand } from '../core/commands/ChangeAttributeCommand';
+import { DeleteElementCommand } from '../core/commands/DeleteElementCommand';
 import { ReorderCommand } from '../core/commands/ReorderCommand';
 import type { LayerInfo } from '../types';
 
@@ -9,10 +10,13 @@ const ICON_EYE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" str
 const ICON_EYE_OFF = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z" opacity="0.3"/><line x1="3" y1="13" x2="13" y2="3"/></svg>`;
 const ICON_LOCK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="7" width="8" height="6" rx="1"/><path d="M6 7V5a2 2 0 014 0v2"/></svg>`;
 const ICON_UNLOCK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="7" width="8" height="6" rx="1"/><path d="M6 7V5a2 2 0 014 0v2" opacity="0.3"/></svg>`;
+const ICON_DELETE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M6 5V4a1 1 0 011-1h2a1 1 0 011 1v1M5 5v7a1 1 0 001 1h4a1 1 0 001-1V5"/></svg>`;
 
 export class LayersPanel {
   private list!: HTMLUListElement;
   private draggedLayer: LayerInfo | null = null;
+  private dragOverRow: HTMLElement | null = null;
+  private dropPosition: 'above' | 'below' = 'above';
 
   constructor(
     private container: HTMLElement,
@@ -129,6 +133,17 @@ export class LayersPanel {
       };
       actions.appendChild(lockBtn);
 
+      // Delete button
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'layer-action-btn layer-delete-btn';
+      deleteBtn.innerHTML = ICON_DELETE;
+      deleteBtn.title = 'Delete element';
+      deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.deleteLayer(layer);
+      };
+      actions.appendChild(deleteBtn);
+
       row.appendChild(actions);
 
       // Click to select
@@ -141,31 +156,62 @@ export class LayersPanel {
       // Drag and drop
       row.addEventListener('dragstart', (e) => {
         this.draggedLayer = layer;
-        row.style.opacity = '0.5';
+        row.classList.add('dragging');
         e.dataTransfer!.effectAllowed = 'move';
       });
       row.addEventListener('dragend', () => {
-        row.style.opacity = '';
+        row.classList.remove('dragging');
+        this.clearDropIndicator();
         this.draggedLayer = null;
       });
       row.addEventListener('dragover', (e) => {
         e.preventDefault();
+        if (!this.draggedLayer || this.draggedLayer === layer) return;
         e.dataTransfer!.dropEffect = 'move';
-        row.style.borderTop = '2px solid var(--accent)';
+
+        // Determine above/below based on cursor position within the row
+        const rect = row.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const position = e.clientY < midY ? 'above' : 'below';
+
+        if (this.dragOverRow !== row || this.dropPosition !== position) {
+          this.clearDropIndicator();
+          this.dragOverRow = row;
+          this.dropPosition = position;
+          row.classList.add(position === 'above' ? 'drop-above' : 'drop-below');
+        }
       });
-      row.addEventListener('dragleave', () => {
-        row.style.borderTop = '';
+      row.addEventListener('dragleave', (e) => {
+        // Only clear if actually leaving the row (not entering a child)
+        if (!row.contains(e.relatedTarget as Node)) {
+          if (this.dragOverRow === row) {
+            this.clearDropIndicator();
+          }
+        }
       });
       row.addEventListener('drop', (e) => {
         e.preventDefault();
-        row.style.borderTop = '';
-        if (this.draggedLayer && this.draggedLayer !== layer) {
-          // Move dragged element before target
-          this.commandManager.execute(
-            new ReorderCommand(this.draggedLayer.element, layer.element)
-          );
-          this.state.refreshLayers();
+        const dropPos = this.dropPosition;
+        this.clearDropIndicator();
+        if (!this.draggedLayer || this.draggedLayer === layer) return;
+
+        // The UI list is reversed: first row = topmost layer = last DOM child.
+        // "above" in UI = higher z-index = later in DOM.
+        // "below" in UI = lower z-index = earlier in DOM.
+        const draggedEl = this.draggedLayer.element;
+        const targetEl = layer.element;
+
+        let refNode: Node | null;
+        if (dropPos === 'above') {
+          // Place dragged after target in DOM (higher z-index = above in UI)
+          refNode = targetEl.nextSibling;
+        } else {
+          // Place dragged before target in DOM (lower z-index = below in UI)
+          refNode = targetEl;
         }
+
+        this.commandManager.execute(new ReorderCommand(draggedEl, refNode));
+        this.state.refreshLayers();
       });
 
       this.list.appendChild(row);
@@ -176,6 +222,13 @@ export class LayersPanel {
       empty.className = 'panel-empty';
       empty.textContent = 'No layers';
       this.list.appendChild(empty);
+    }
+  }
+
+  private clearDropIndicator(): void {
+    if (this.dragOverRow) {
+      this.dragOverRow.classList.remove('drop-above', 'drop-below');
+      this.dragOverRow = null;
     }
   }
 
@@ -200,16 +253,24 @@ export class LayersPanel {
     this.state.refreshLayers();
   }
 
+  private deleteLayer(layer: LayerInfo): void {
+    if (this.selectionManager.isSelected(layer.element)) {
+      this.selectionManager.deselect(layer.element);
+    }
+    this.commandManager.execute(new DeleteElementCommand(layer.element));
+    this.state.refreshLayers();
+  }
+
   private toggleLock(layer: LayerInfo): void {
     const el = layer.element;
-    if (el.hasAttribute('data-locked')) {
-      el.removeAttribute('data-locked');
-    } else {
-      el.setAttribute('data-locked', 'true');
-      // Deselect if locked
-      if (this.selectionManager.isSelected(el)) {
-        this.selectionManager.deselect(el);
-      }
+    const oldValue = el.getAttribute('data-locked');
+    const newValue = oldValue ? null : 'true';
+    this.commandManager.execute(
+      new ChangeAttributeCommand(el, 'data-locked', oldValue, newValue)
+    );
+    // Deselect if locking
+    if (newValue && this.selectionManager.isSelected(el)) {
+      this.selectionManager.deselect(el);
     }
     this.state.refreshLayers();
   }

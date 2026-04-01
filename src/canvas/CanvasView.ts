@@ -9,6 +9,7 @@ export class CanvasView {
   private container: HTMLElement;
   private state: EditorState;
   private _viewBox: ViewBox = { x: 0, y: 0, width: 800, height: 600 };
+  private _originalViewBox: ViewBox = { x: 0, y: 0, width: 800, height: 600 };
   private welcomeEl: HTMLElement | null = null;
 
   constructor(container: HTMLElement, state: EditorState) {
@@ -60,6 +61,9 @@ export class CanvasView {
       const h = parseFloat(svgElement.getAttribute('height') || '600');
       this._viewBox = { x: 0, y: 0, width: w, height: h };
     }
+
+    // Store the original viewBox for export (before zoom/pan changes it)
+    this._originalViewBox = { ...this._viewBox };
 
     // Move children into content group
     const children = Array.from(svgElement.childNodes);
@@ -126,6 +130,10 @@ export class CanvasView {
 
   getContentElement(): SVGGElement {
     return this.contentGroup;
+  }
+
+  get originalViewBox(): ViewBox {
+    return { ...this._originalViewBox };
   }
 
   private updateViewBox(): void {

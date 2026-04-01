@@ -5,7 +5,7 @@ export class SvgExporter {
 
   exportToString(): string {
     const contentGroup = this.canvasView.getContentElement();
-    const vb = this.canvasView.viewBox;
+    const vb = this.canvasView.originalViewBox;
 
     // Build a clean SVG document
     const serializer = new XMLSerializer();

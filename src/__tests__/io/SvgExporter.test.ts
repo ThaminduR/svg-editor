@@ -14,6 +14,7 @@ function createMockCanvasView() {
     contentGroup,
     getContentElement: () => contentGroup,
     viewBox: { x: 0, y: 0, width: 100, height: 100 },
+    originalViewBox: { x: 0, y: 0, width: 100, height: 100 },
   };
 }
 

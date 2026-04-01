@@ -13,9 +13,12 @@ export class TypedEventEmitter<EventMap extends Record<string, unknown>> {
     this.listeners.get(event)?.delete(handler as (data: never) => void);
   }
 
-  emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void {
+  emit<K extends keyof EventMap>(
+    event: K,
+    ...args: EventMap[K] extends void ? [] : [data: EventMap[K]]
+  ): void {
     this.listeners.get(event)?.forEach((handler) => {
-      (handler as (data: EventMap[K]) => void)(data);
+      (handler as (data: EventMap[K]) => void)(args[0] as EventMap[K]);
     });
   }
 }

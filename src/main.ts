@@ -83,7 +83,7 @@ class SVGEditorApp {
     this.exporter = new SvgExporter(this.canvasView);
     this.fileHandler = new FileHandler(canvasContainer, this.importer, (svg) => {
       this.canvasView.loadSvgContent(svg);
-      this.state.loadSvg(svg);
+      this.state.loadSvg(svg, this.canvasView.getContentElement());
       this.selectionManager.clearSelection();
     });
 
@@ -91,7 +91,8 @@ class SVGEditorApp {
     this.clipboardManager = new ClipboardManager(
       this.selectionManager,
       this.commandManager,
-      this.canvasView
+      this.canvasView,
+      this.state
     );
 
     // Panels
@@ -128,10 +129,7 @@ class SVGEditorApp {
         e.preventDefault();
       }
 
-      // Don't handle shortcuts when typing in inputs
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      // Undo / Redo
+      // Undo / Redo should work even from inputs
       if (isMod && e.key === 'z' && !e.shiftKey) {
         this.commandManager.undo();
         return;
@@ -140,6 +138,9 @@ class SVGEditorApp {
         this.commandManager.redo();
         return;
       }
+
+      // Don't handle other shortcuts when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       // Save/Export
       if (isMod && e.key === 's') {

@@ -162,10 +162,11 @@ export class SelectTool implements Tool {
   }
 
   private handleMove(dx: number, dy: number): void {
+    const totalDx = this.lastSvgPt.x + dx - this.startSvgPt.x;
+    const totalDy = this.lastSvgPt.y + dy - this.startSvgPt.y;
     for (const el of this.selectionManager.selected) {
-      const currentTransform = el.getAttribute('transform') || '';
-      // Append translation
-      el.setAttribute('transform', `${currentTransform} translate(${dx}, ${dy})`);
+      const original = this.originalTransforms.get(el) || '';
+      el.setAttribute('transform', `translate(${totalDx}, ${totalDy}) ${original}`);
     }
     this.updateOverlays();
   }
@@ -179,26 +180,29 @@ export class SelectTool implements Tool {
 
     try {
       const bbox = el.getBBox();
+      if (bbox.width === 0 || bbox.height === 0) return;
+
       const center = { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 };
 
-      // Calculate scale based on handle position
+      // Calculate scale relative to the element's actual dimensions
       const dx = svgPt.x - this.startSvgPt.x;
       const dy = svgPt.y - this.startSvgPt.y;
 
       let sx = 1, sy = 1;
-      const handleScale = 0.005;
+      const halfW = bbox.width / 2;
+      const halfH = bbox.height / 2;
 
       switch (this.activeHandle) {
         case HandleType.E: case HandleType.NE: case HandleType.SE:
-          sx = 1 + dx * handleScale; break;
+          sx = (halfW + dx) / halfW; break;
         case HandleType.W: case HandleType.NW: case HandleType.SW:
-          sx = 1 - dx * handleScale; break;
+          sx = (halfW - dx) / halfW; break;
       }
       switch (this.activeHandle) {
         case HandleType.S: case HandleType.SE: case HandleType.SW:
-          sy = 1 + dy * handleScale; break;
+          sy = (halfH + dy) / halfH; break;
         case HandleType.N: case HandleType.NE: case HandleType.NW:
-          sy = 1 - dy * handleScale; break;
+          sy = (halfH - dy) / halfH; break;
       }
 
       // Constrain to positive scales

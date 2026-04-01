@@ -6,6 +6,7 @@ export class EditorState extends TypedEventEmitter<EditorEventMap> {
   private _activeTool: EditorMode = EditorMode.SELECT;
   private _layers: LayerInfo[] = [];
   private _svgRoot: SVGSVGElement | null = null;
+  private _contentContainer: SVGElement | null = null;
   private _zoom = 1;
 
   get activeTool(): EditorMode {
@@ -34,21 +35,25 @@ export class EditorState extends TypedEventEmitter<EditorEventMap> {
     this.emit('zoom-changed', value);
   }
 
-  loadSvg(svg: SVGSVGElement): void {
+  loadSvg(svg: SVGSVGElement, contentContainer?: SVGElement): void {
     this._svgRoot = svg;
+    if (contentContainer) {
+      this._contentContainer = contentContainer;
+    }
     this.refreshLayers();
     this.emit('svg-loaded', svg);
   }
 
   refreshLayers(): void {
-    if (!this._svgRoot) {
+    const container = this._contentContainer || this._svgRoot;
+    if (!container) {
       this._layers = [];
       this.emit('layers-changed', this._layers);
       return;
     }
 
     const layers: LayerInfo[] = [];
-    const children = this._svgRoot.children;
+    const children = container.children;
     for (let i = 0; i < children.length; i++) {
       const child = children[i] as SVGElement;
       if (!isGraphicsElement(child)) continue;

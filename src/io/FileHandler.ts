@@ -71,7 +71,9 @@ export class FileHandler {
       this.container.classList.remove('drag-over');
 
       const file = e.dataTransfer?.files[0];
-      if (!file || !file.name.endsWith('.svg')) return;
+      if (!file) return;
+      const isSvg = file.type === 'image/svg+xml' || file.name.endsWith('.svg');
+      if (!isSvg) return;
 
       try {
         const svg = await this.importer.importFromFile(file);

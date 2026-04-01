@@ -49,6 +49,6 @@ export class CommandManager {
       canUndo: this.canUndo(),
       canRedo: this.canRedo(),
     });
-    this.state.emit('command-executed', undefined as never);
+    this.state.emit('command-executed');
   }
 }
